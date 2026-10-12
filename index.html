@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Face Attendance</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --text: #1d2330; --muted: #667085;
+    --line: #e3e6ec; --accent: #2f6fed; --accent-text: #ffffff;
+    --ok: #12a150; --bad: #d92d20;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #12151c; --card: #1b2029; --text: #e8ebf2; --muted: #9aa3b5;
+            --line: #2b3240; --accent: #5b8cff; --accent-text: #0c1020; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 18px 20px 6px; max-width: 1180px; margin: 0 auto; }
+  h1 { margin: 0; font-size: 22px; }
+  header p { margin: 4px 0 0; color: var(--muted); }
+  main { max-width: 1180px; margin: 0 auto; padding: 12px 20px 40px;
+         display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 16px; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+  .card h2 { margin: 0 0 10px; font-size: 16px; }
+  .video-wrap { position: relative; background: #101318; border-radius: 10px; overflow: hidden;
+                aspect-ratio: 4 / 3; display: flex; align-items: center; justify-content: center; }
+  video, canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+  .placeholder { color: #9aa3b5; position: relative; z-index: 1; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row + .row { margin-top: 8px; }
+  button, .filebtn { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); cursor: pointer; }
+  button:hover, .filebtn:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  input[type=text], input[type=email] { font: inherit; padding: 8px 10px; border-radius: 8px;
+           border: 1px solid var(--line); background: var(--bg); color: var(--text); min-width: 0; flex: 1 1 150px; }
+  .filebtn input { display: none; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); padding: 10px 0 2px; }
+  .person { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .person:last-child { border-bottom: 0; }
+  .person img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; background: var(--bg); }
+  .person .info { flex: 1; min-width: 0; }
+  .person .name { font-weight: 600; }
+  .person .sub { color: var(--muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .small { padding: 4px 10px; font-size: 13px; }
+  #status { position: sticky; bottom: 0; padding: 10px 20px; background: var(--card);
+            border-top: 1px solid var(--line); color: var(--muted); }
+  #status.err { color: var(--bad); }
+  .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Face Attendance</h1>
+  <p>Runs entirely in your browser. No installs, no uploads: faces and attendance are saved on this device only.</p>
+</header>
+
+<main>
+  <div class="col">
+    <section class="card">
+      <h2>Camera</h2>
+      <div class="video-wrap">
+        <span class="placeholder" id="placeholder">Camera is off</span>
+        <video id="video" playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+      <div class="row">
+        <button class="primary" id="camBtn" disabled>Start camera</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Add a person</h2>
+      <div class="row">
+        <input type="text" id="nameInput" placeholder="Name (e.g. Rahul)" autocomplete="off">
+        <input type="email" id="emailInput" placeholder="Parent email (optional)" autocomplete="off">
+      </div>
+      <div class="row">
+        <button id="captureBtn" disabled>Capture from camera</button>
+        <label class="filebtn">Upload photo(s)
+          <input type="file" id="fileInput" accept="image/*" multiple>
+        </label>
+      </div>
+      <p class="note">Type a name first, then capture (face the camera) or upload clear front-facing photos.
+        Adding 2-3 photos of the same name improves accuracy.</p>
+    </section>
+  </div>
+
+  <div class="col">
+    <section class="card">
+      <h2>Today's attendance <span id="todayCount" style="color:var(--muted);font-weight:400"></span></h2>
+      <div id="attendanceBox"></div>
+      <div class="row" style="margin-top:12px">
+        <button id="csvBtn">Download CSV</button>
+        <button id="clearBtn" class="danger">Clear history</button>
+      </div>
+      <p class="note">Each person is marked once per day. The "Email parent" button opens a ready-made draft in your mail app.</p>
+    </section>
+
+    <section class="card">
+      <h2>People <span id="peopleCount" style="color:var(--muted);font-weight:400"></span></h2>
+      <div id="peopleBox"></div>
+    </section>
+  </div>
+</main>
+
+<div id="status">Loading...</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/dist/face-api.js"></script>
+<script>
+(() => {
+  'use strict';
+
+  // ------------------------------ Settings ------------------------------
+  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model/';
+  const MATCH_THRESHOLD = 0.5;      // lower = stricter (0.6 is the usual default)
+  const DETECT_EVERY_MS = 200;      // how often to look for faces
+  const MAX_PHOTOS_PER_PERSON = 6;
+  const LS_PEOPLE = 'faceAttendance.people.v1';
+  const LS_ATT = 'faceAttendance.attendance.v1';
+
+  // ------------------------------ State ---------------------------------
+  const $ = (id) => document.getElementById(id);
+  const video = $('video'), overlay = $('overlay'), ctx = overlay.getContext('2d');
+  let people = load(LS_PEOPLE, []);        // [{name, email, thumb, descriptors:[[128 numbers],...]}]
+  let attendance = load(LS_ATT, []);       // [{name, date, time}]
+  let matcher = null, stream = null, running = false, modelsReady = false, timer = null;
+
+  function load(key, fallback) {
+    try { const v = JSON.parse(localStorage.getItem(key)); return Array.isArray(v) ? v : fallback; }
+    catch { return fallback; }
+  }
+  function save(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+    catch { setStatus('Could not save data (browser storage is full or blocked).', true); return false; }
+  }
+
+  function setStatus(text, isError = false) {
+    const s = $('status'); s.textContent = text; s.classList.toggle('err', isError);
+  }
+  const todayStr = () => new Date().toLocaleDateString('en-CA');           // YYYY-MM-DD
+  const timeStr = () => new Date().toLocaleTimeString('en-GB');            // HH:MM:SS
+
+  function el(tag, props = {}, children = []) {
+    const node = document.createElement(tag);
+    Object.entries(props).forEach(([k, v]) => {
+      if (k === 'text') node.textContent = v;
+      else if (k === 'class') node.className = v;
+      else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
+      else node.setAttribute(k, v);
+    });
+    [].concat(children).forEach((c) => node.append(c));
+    return node;
+  }
+
+  // ------------------------------ Models --------------------------------
+  async function loadModels() {
+    if (typeof faceapi === 'undefined') {
+      setStatus('Could not load the face library. Check your internet connection and reload the page.', true);
+      return;
+    }
+    setStatus('Loading face models (first load takes a few seconds)...');
+    try {
+      await Promise.all([
+        faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+        faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+        faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      ]);
+      modelsReady = true;
+      $('camBtn').disabled = false;
+      $('captureBtn').disabled = false;
+      setStatus(people.length
+        ? 'Ready. Press "Start camera" to begin taking attendance.'
+        : 'Ready. Add at least one person, then start the camera.');
+    } catch (e) {
+      console.error(e);
+      setStatus('Could not load the face models. Check your internet connection and reload the page.', true);
+    }
+  }
+
+  function buildMatcher() {
+    if (!people.length) { matcher = null; return; }
+    const labeled = people.map((p) => new faceapi.LabeledFaceDescriptors(
+      p.name, p.descriptors.map((d) => new Float32Array(d))));
+    matcher = new faceapi.FaceMatcher(labeled, MATCH_THRESHOLD);
+  }
+
+  // ------------------------------ Camera --------------------------------
+  async function startCamera() {
+    if (!modelsReady) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus('This browser or page cannot use the camera. Try Chrome or Edge.', true);
+      return;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' }, audio: false });
+    } catch (e) {
+      setStatus('Camera blocked or not found. Allow camera access in the address bar and try again.', true);
+      return;
+    }
+    video.srcObject = stream;
+    await video.play();
+    $('placeholder').style.display = 'none';
+    $('camBtn').textContent = 'Stop camera';
+    running = true;
+    buildMatcher();
+    setStatus(people.length ? 'Camera running.' : 'Camera running, but nobody is added yet.');
+    tick();
+  }
+
+  function stopCamera() {
+    running = false;
+    clearTimeout(timer);
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+    video.srcObject = null;
+    ctx.clearRect(0, 0, overlay.width, overlay.height);
+    $('placeholder').style.display = '';
+    $('camBtn').textContent = 'Start camera';
+    setStatus('Camera stopped.');
+  }
+
+  async function tick() {
+    if (!running) return;
+    const t0 = performance.now();
+    try { await detectFrame(); } catch (e) { console.error(e); }
+    if (running) timer = setTimeout(tick, Math.max(0, DETECT_EVERY_MS - (performance.now() - t0)));
+  }
+
+  async function detectFrame() {
+    if (!video.videoWidth) return;
+    const size = { width: video.videoWidth, height: video.videoHeight };
+    if (overlay.width !== size.width || overlay.height !== size.height) {
+      overlay.width = size.width; overlay.height = size.height;
+    }
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 });
+    const found = await faceapi.detectAllFaces(video, opts).withFaceLandmarks().withFaceDescriptors();
+    if (!running) return;
+    const results = faceapi.resizeResults(found, size);
+
+    ctx.clearRect(0, 0, size.width, size.height);
+    ctx.lineWidth = 3; ctx.font = '600 20px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+    for (const r of results) {
+      let label = 'Unknown', known = false;
+      if (matcher) {
+        const best = matcher.findBestMatch(r.descriptor);
+        if (best.label !== 'unknown') { label = best.label; known = true; }
+      }
+      const { x, y, width, height } = r.detection.box;
+      const color = known ? '#12a150' : '#d92d20';
+      ctx.strokeStyle = color; ctx.strokeRect(x, y, width, height);
+      const textW = ctx.measureText(label).width + 16;
+      ctx.fillStyle = color; ctx.fillRect(x - 1.5, y + height, Math.max(textW, width + 3), 30);
+      ctx.fillStyle = '#ffffff'; ctx.fillText(label, x + 6, y + height + 15);
+      if (known) markAttendance(label);
+    }
+  }
+
+  // ----------------------------- Attendance -----------------------------
+  function markAttendance(name) {
+    const date = todayStr();
+    if (attendance.some((a) => a.name === name && a.date === date)) return;
+    const rec = { name, date, time: timeStr() };
+    attendance.push(rec);
+    save(LS_ATT, attendance);
+    renderAttendance();
+    setStatus(`Attendance marked: ${name} at ${rec.time}`);
+  }
+
+  function renderAttendance() {
+    const box = $('attendanceBox');
+    box.replaceChildren();
+    const today = attendance.filter((a) => a.date === todayStr()).reverse();
+    $('todayCount').textContent = today.length ? `(${today.length})` : '';
+    if (!today.length) { box.append(el('div', { class: 'empty', text: 'Nobody marked yet today.' })); return; }
+
+    const table = el('table');
+    table.append(el('thead', {}, el('tr', {}, ['Name', 'Time', ''].map((h) => el('th', { text: h })))));
+    const body = el('tbody');
+    for (const rec of today) {
+      const person = people.find((p) => p.name === rec.name);
+      const action = el('td');
+      if (person && person.email) {
+        action.append(el('button', { class: 'small', text: 'Email parent', onclick: () => emailParent(rec, person) }));
+      }
+      body.append(el('tr', {}, [
+        el('td', { text: rec.name }),
+        el('td', { class: 'num', text: rec.time }),
+        action,
+      ]));
+    }
+    table.append(body);
+    box.append(table);
+  }
+
+  function emailParent(rec, person) {
+    const subject = `Attendance marked: ${rec.name}`;
+    const body = `${rec.name} was marked present at ${rec.time} on ${rec.date}.`;
+    window.location.href = `mailto:${encodeURIComponent(person.email)}`
+      + `?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+
+  function downloadCsv() {
+    const esc = (v) => `"${String(v).replace(/"/g, '""')}"`;
+    const lines = ['Name,Date,Time', ...attendance.map((a) => [a.name, a.date, a.time].map(esc).join(','))];
+    const blob = new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv' });
+    const a = el('a', { href: URL.createObjectURL(blob), download: `attendance-${todayStr()}.csv` });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  function clearHistory() {
+    if (!attendance.length) return;
+    if (!confirm('Delete ALL saved attendance records? Download the CSV first if you need them.')) return;
+    attendance = []; save(LS_ATT, attendance); renderAttendance(); setStatus('Attendance history cleared.');
+  }
+
+  // ------------------------------- People -------------------------------
+  function renderPeople() {
+    const box = $('peopleBox');
+    box.replaceChildren();
+    $('peopleCount').textContent = people.length ? `(${people.length})` : '';
+    if (!people.length) { box.append(el('div', { class: 'empty', text: 'No one added yet.' })); return; }
+    for (const p of people) {
+      const info = el('div', { class: 'info' }, [
+        el('div', { class: 'name', text: p.name }),
+        el('div', { class: 'sub',
+          text: `${p.descriptors.length} photo${p.descriptors.length === 1 ? '' : 's'}`
+                + (p.email ? ` · ${p.email}` : ' · no parent email') }),
+      ]);
+      box.append(el('div', { class: 'person' }, [
+        el('img', { src: p.thumb || '', alt: '' }),
+        info,
+        el('button', { class: 'small', text: 'Email', title: 'Set parent email', onclick: () => editEmail(p) }),
+        el('button', { class: 'small danger', text: 'Delete', onclick: () => removePerson(p) }),
+      ]));
+    }
+  }
+
+  function editEmail(p) {
+    const v = prompt(`Parent email for ${p.name} (leave empty to remove):`, p.email || '');
+    if (v === null) return;
+    p.email = v.trim(); save(LS_PEOPLE, people); renderPeople(); renderAttendance();
+  }
+
+  function removePerson(p) {
+    if (!confirm(`Remove ${p.name} and their saved face data?`)) return;
+    people = people.filter((x) => x !== p);
+    save(LS_PEOPLE, people); buildMatcher(); renderPeople(); renderAttendance();
+  }
+
+  function addDescriptor(name, email, descriptor, thumb) {
+    let person = people.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (!person) {
+      person = { name, email: email || '', thumb, descriptors: [] };
+      people.push(person);
+    } else if (email) {
+      person.email = email;
+    }
+    person.descriptors.push(Array.from(descriptor));
+    if (person.descriptors.length > MAX_PHOTOS_PER_PERSON) person.descriptors.shift();
+    if (!person.thumb) person.thumb = thumb;
+    const ok = save(LS_PEOPLE, people);
+    buildMatcher(); renderPeople(); renderAttendance();
+    return ok;
+  }
+
+  function makeThumb(source, box) {
+    const c = document.createElement('canvas'); c.width = 96; c.height = 96;
+    const pad = Math.max(box.width, box.height) * 0.25;
+    const side = Math.max(box.width, box.height) + pad * 2;
+    const sx = Math.max(0, box.x + box.width / 2 - side / 2);
+    const sy = Math.max(0, box.y + box.height / 2 - side / 2);
+    c.getContext('2d').drawImage(source, sx, sy, side, side, 0, 0, 96, 96);
+    return c.toDataURL('image/jpeg', 0.7);
+  }
+
+  function readNameAndEmail() {
+    const name = $('nameInput').value.trim();
+    if (!name) { setStatus('Type the person\'s name first.', true); $('nameInput').focus(); return null; }
+    return { name, email: $('emailInput').value.trim() };
+  }
+
+  async function captureFromCamera() {
+    const info = readNameAndEmail(); if (!info) return;
+    if (!running) { setStatus('Start the camera first, then capture.', true); return; }
+    setStatus('Looking for a face...');
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 416, scoreThreshold: 0.5 });
+    const det = await faceapi.detectSingleFace(video, opts).withFaceLandmarks().withFaceDescriptor();
+    if (!det) { setStatus('No face found. Face the camera in good light and try again.', true); return; }
+    const thumb = makeThumb(video, det.detection.box);
+    if (addDescriptor(info.name, info.email, det.descriptor, thumb)) setStatus(`Saved a photo of ${info.name}.`);
+  }
+
+  async function addFromFiles(files) {
+    const info = readNameAndEmail();
+    if (!info) { $('fileInput').value = ''; return; }
+    let added = 0, skipped = [];
+    const opts = new faceapi.TinyFaceDetectorOptions({ inputSize: 512, scoreThreshold: 0.5 });
+    for (const file of files) {
+      setStatus(`Reading ${file.name}...`);
+      try {
+        const img = await faceapi.bufferToImage(file);
+        const det = await faceapi.detectSingleFace(img, opts).withFaceLandmarks().withFaceDescriptor();
+        if (!det) { skipped.push(file.name); continue; }
+        addDescriptor(info.name, info.email, det.descriptor, makeThumb(img, det.detection.box));
+        added++;
+      } catch (e) { console.error(e); skipped.push(file.name); }
+    }
+    $('fileInput').value = '';
+    setStatus(`Added ${added} photo(s) for ${info.name}.`
+      + (skipped.length ? ` No face found in: ${skipped.join(', ')}` : ''), skipped.length > 0 && !added);
+  }
+
+  // ------------------------------- Wiring -------------------------------
+  $('camBtn').addEventListener('click', () => (running ? stopCamera() : startCamera()));
+  $('captureBtn').addEventListener('click', captureFromCamera);
+  $('fileInput').addEventListener('change', (e) => { if (e.target.files.length) addFromFiles([...e.target.files]); });
+  $('csvBtn').addEventListener('click', downloadCsv);
+  $('clearBtn').addEventListener('click', clearHistory);
+  window.addEventListener('beforeunload', () => { if (stream) stream.getTracks().forEach((t) => t.stop()); });
+
+  renderPeople();
+  renderAttendance();
+  loadModels();
+})();
+</script>
+</body>
+</html>
